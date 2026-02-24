@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (if present)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Syntax check (py_compile)
+        shell: bash
+        run: |
+          python - << 'PY'
+          import pathlib, py_compile, sys
+          files = [p for p in pathlib.Path('src').rglob('*.py')]
+          if not files:
+            print('No python files under src/')
+            sys.exit(0)
+          bad = []
+          for f in files:
+            try:
+              py_compile.compile(str(f), doraise=True)
+            except Exception as e:
+              bad.append((str(f), str(e)))
+          if bad:
+            for f, e in bad:
+              print(f"[FAIL] {f}: {e}")
+            sys.exit(1)
+          print(f"OK: compiled {len(files)} files")
+          PY
