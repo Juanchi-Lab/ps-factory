@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Block obvious secrets in staged changes (exclude this hook file to avoid false positives)
+changed_files=$(git diff --cached --name-only | grep -v '^.githooks/pre-commit$' || true)
+if [ -n "${changed_files}" ]; then
+  if echo "${changed_files}" | xargs -r grep -nE "(OPENCLAW_GATEWAY_TOKEN|TG_BOT_TOKEN|X_BEARER_TOKEN|API_KEY|PRIVATE KEY)"; then
+    echo "❌ Possible secret detected in staged files."
+    exit 1
+  fi
+fi
+
+# Basic python syntax check for staged .py files
+files=$(git diff --cached --name-only | grep -E '\.py$' || true)
+if [ -n "${files}" ]; then
+  python3 -m py_compile ${files}
+fi
