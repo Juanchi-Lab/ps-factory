@@ -1,0 +1,2 @@
+nohup: ignoring input
+/opt/ps_factory/venv/bin/python3: Error while finding module specification for 'tg.nova_bot' (ModuleNotFoundError: No module named 'tg')
