@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Env / secrets
+config/.env
+.env
+
+# Runtime / DB / logs
+var/*.db
+logs/
+*.log
+outputs/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
