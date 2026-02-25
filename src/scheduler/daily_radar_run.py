@@ -55,6 +55,17 @@ async def _mark_observability(*, result: str, winner_score: float | None = None,
         await kv_set("obs:daily_radar_last_detail", detail[:500])
 
 
+async def _notify_once_per_day(*, bot: Bot, ops_chat_id: int, day: str, reason: str, text: str) -> None:
+    if not ops_chat_id:
+        return
+    once_key = f"ops:daily_radar_notice:{reason}:{day}"
+    already = await kv_get(once_key)
+    if already:
+        return
+    await _notify(bot, ops_chat_id, text)
+    await kv_set(once_key, str(_now_ts()))
+
+
 async def run_daily() -> int:
     load_dotenv('/opt/ps_factory/config/.env', override=True)
 
@@ -71,7 +82,13 @@ async def run_daily() -> int:
 
     existing = await get_post(post_id)
     if existing and existing.get('draft_chat_id') and existing.get('draft_message_id'):
-        await _notify(bot, ops_chat_id, f"ℹ️ Daily radar ya publicado hoy. post_id=<code>{post_id}</code>")
+        await _notify_once_per_day(
+            bot=bot,
+            ops_chat_id=ops_chat_id,
+            day=today,
+            reason="already_published",
+            text=f"ℹ️ Daily radar ya publicado hoy. post_id=<code>{post_id}</code>",
+        )
         await kv_set(today_key, str(existing.get('draft_message_id')))
         await _mark_observability(result="skip", detail="already_published")
         return 0
@@ -85,7 +102,13 @@ async def run_daily() -> int:
         except Exception:
             lock_ts = now_ts
         if now_ts - lock_ts < 900:
-            await _notify(bot, ops_chat_id, f"ℹ️ Daily radar en ejecución o recién corrido. lock=<code>{lock_key}</code>")
+            await _notify_once_per_day(
+                bot=bot,
+                ops_chat_id=ops_chat_id,
+                day=today,
+                reason="lock_recent",
+                text=f"ℹ️ Daily radar en ejecución o recién corrido. lock=<code>{lock_key}</code>",
+            )
             await _mark_observability(result="skip", detail="lock_recent")
             return 0
     await kv_set(lock_key, str(now_ts))
@@ -94,7 +117,13 @@ async def run_daily() -> int:
     try:
         already = await kv_get(today_key)
         if already:
-            await _notify(bot, ops_chat_id, f"ℹ️ Daily radar ya ejecutado hoy. key=<code>{today_key}</code>")
+            await _notify_once_per_day(
+                bot=bot,
+                ops_chat_id=ops_chat_id,
+                day=today,
+                reason="already_marked",
+                text=f"ℹ️ Daily radar ya ejecutado hoy. key=<code>{today_key}</code>",
+            )
             await _mark_observability(result="skip", detail="already_marked")
             return 0
 
