@@ -20,6 +20,7 @@ from db.sqlite_store import (
     log_event,
     kv_get,
     kv_set,
+    get_post,
 )
 
 
@@ -42,10 +43,35 @@ async def run_daily() -> int:
 
     bot = Bot(token=token)
 
-    today_key = f"scheduler:daily_radar_run:{datetime.now(timezone.utc).date().isoformat()}"
+    today = datetime.now(timezone.utc).date().isoformat()
+    today_key = f"scheduler:daily_radar_run:{today}"
+    lock_key = f"scheduler:daily_radar_lock:{today}"
+    post_id = f"daily-radar-{today.replace('-', '')}"
+
+    # Idempotencia 1: si ya hay draft_ref para el post diario, no duplicar publicación.
+    existing = await get_post(post_id)
+    if existing and existing.get('draft_chat_id') and existing.get('draft_message_id'):
+        await _notify(bot, ops_chat_id, f"ℹ️ Daily radar ya publicado hoy. post_id=<code>{post_id}</code>")
+        await kv_set(today_key, str(existing.get('draft_message_id')))
+        return 0
+
+    # Idempotencia 2: lock simple para evitar doble ejecución concurrente.
+    lock_val = await kv_get(lock_key)
+    now_ts = _now_ts()
+    if lock_val:
+        try:
+            lock_ts = int(lock_val)
+        except Exception:
+            lock_ts = now_ts
+        if now_ts - lock_ts < 900:  # 15 min
+            await _notify(bot, ops_chat_id, f"ℹ️ Daily radar en ejecución o recién corrido. lock=<code>{lock_key}</code>")
+            return 0
+    await kv_set(lock_key, str(now_ts))
+
     already = await kv_get(today_key)
     if already:
         await _notify(bot, ops_chat_id, f"ℹ️ Daily radar ya ejecutado hoy. key=<code>{today_key}</code>")
+        await kv_set(lock_key, "0")
         return 0
 
     run_id, winner, alternates = await run_radar_x()
@@ -53,10 +79,9 @@ async def run_daily() -> int:
     winner_score = float(winner.get('total_score') or 0.0)
     min_score = float(os.getenv('RADAR_MIN_SCORE', '0.55'))
 
-    # idempotencia diaria: se marca aunque haga skip por umbral
-    await kv_set(today_key, str(_now_ts()))
-
     if winner_score < min_score:
+        await kv_set(today_key, f"skip:{winner_score:.3f}")
+        await kv_set(lock_key, "0")
         await _notify(
             bot,
             ops_chat_id,
@@ -71,7 +96,6 @@ async def run_daily() -> int:
     raw = openclaw_chat(prompt)
     post = json.loads(_extract_json(raw))
 
-    post_id = f"radar-{_now_ts()}"
     post['post_id'] = post_id
     post['topic'] = str(post.get('topic') or 'Radar X (Top)')
     post['radar_winner_candidate_id'] = winner_id
@@ -101,6 +125,9 @@ async def run_daily() -> int:
         reply_markup=build_post_keyboard(post_id, candidate_ids=alt_ids),
     )
     await set_draft_message_ref(post_id, drafts_chat_id, msg.message_id)
+
+    await kv_set(today_key, f"ok:{post_id}:{msg.message_id}")
+    await kv_set(lock_key, "0")
 
     await _notify(
         bot,
