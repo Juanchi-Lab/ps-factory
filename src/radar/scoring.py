@@ -1,4 +1,5 @@
 import math
+import os
 import re
 from typing import Dict, Tuple, List, Any
 from urllib.parse import urlparse
@@ -41,6 +42,26 @@ LOW_TRUST_DOMAINS: List[str] = [
     "medium.com",
     "substack.com",
 ]
+
+
+def _fenv(key: str, default: float) -> float:
+    try:
+        return float(os.getenv(key, str(default)))
+    except Exception:
+        return default
+
+
+W_RELEVANCE = _fenv("SCORING_W_RELEVANCE", 0.45)
+W_VIRAL = _fenv("SCORING_W_VIRAL", 0.25)
+W_EDU = _fenv("SCORING_W_EDU", 0.15)
+W_RISK = _fenv("SCORING_W_RISK", 0.35)
+
+LINK_BOOST_BASE = _fenv("SCORING_LINK_BOOST_BASE", 2.2)
+LINK_BOOST_EXTRA_URL = _fenv("SCORING_LINK_BOOST_EXTRA_URL", 0.3)
+RT_PENALTY_VALUE = _fenv("SCORING_RT_PENALTY", 0.8)
+
+DOMAIN_BOOST_HIGH = _fenv("SCORING_DOMAIN_BOOST_HIGH", 0.9)
+DOMAIN_BOOST_LOW = _fenv("SCORING_DOMAIN_BOOST_LOW", -0.35)
 
 # ---------------------------
 # Helpers
@@ -86,10 +107,10 @@ def _domain_trust_score(domains: List[str]) -> Tuple[float, str]:
         return host == base or host.endswith("." + base)
 
     if any(_match(h, d) for h in domains for d in HIGH_TRUST_DOMAINS):
-        return 0.9, "high"
+        return DOMAIN_BOOST_HIGH, "high"
 
     if any(_match(h, d) for h in domains for d in LOW_TRUST_DOMAINS):
-        return -0.35, "low"
+        return DOMAIN_BOOST_LOW, "low"
 
     return 0.0, "unknown"
 
@@ -180,9 +201,9 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
 
     link_boost = 0.0
     if has_url:
-        link_boost += 2.2
+        link_boost += LINK_BOOST_BASE
         if url_count >= 2:
-            link_boost += 0.3
+            link_boost += LINK_BOOST_EXTRA_URL
 
     domain_boost, domain_trust = _domain_trust_score(domains)
 
@@ -193,18 +214,18 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
     # - Relevancia baja (<5)
     rt_penalty = 0.0
     if is_rt and not has_url and relevance < 5:
-        rt_penalty = 0.8
+        rt_penalty = RT_PENALTY_VALUE
 
     # ---------------------------
     # 6️⃣ Score final
     # ---------------------------
     total = (
-        (0.45 * relevance) +
-        (0.25 * viral) +
-        (0.15 * edu) +
+        (W_RELEVANCE * relevance) +
+        (W_VIRAL * viral) +
+        (W_EDU * edu) +
         link_boost +
         domain_boost -
-        (0.35 * risk) -
+        (W_RISK * risk) -
         rt_penalty
     )
 
@@ -230,6 +251,16 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
         "rts": rts,
         "replies": replies,
         "quotes": quotes,
+        "weights": {
+            "w_relevance": W_RELEVANCE,
+            "w_viral": W_VIRAL,
+            "w_edu": W_EDU,
+            "w_risk": W_RISK,
+            "link_boost_base": LINK_BOOST_BASE,
+            "domain_boost_high": DOMAIN_BOOST_HIGH,
+            "domain_boost_low": DOMAIN_BOOST_LOW,
+            "rt_penalty": RT_PENALTY_VALUE,
+        },
     }
 
     return total, breakdown
