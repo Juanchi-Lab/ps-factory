@@ -46,7 +46,6 @@ async def _kv_incr(key: str, step: int = 1) -> int:
 
 
 async def _mark_observability(*, result: str, winner_score: float | None = None, detail: str = "") -> None:
-    # Counters por resultado (ok|skip|error)
     await _kv_incr(f"obs:daily_radar_runs_total:{result}")
     await kv_set("obs:daily_radar_last_result", result)
     await kv_set("obs:daily_radar_last_run_ts", str(_now_ts()))
@@ -70,7 +69,6 @@ async def run_daily() -> int:
     lock_key = f"scheduler:daily_radar_lock:{today}"
     post_id = f"daily-radar-{today.replace('-', '')}"
 
-    # Idempotencia 1: si ya hay draft_ref para el post diario, no duplicar publicación.
     existing = await get_post(post_id)
     if existing and existing.get('draft_chat_id') and existing.get('draft_message_id'):
         await _notify(bot, ops_chat_id, f"ℹ️ Daily radar ya publicado hoy. post_id=<code>{post_id}</code>")
@@ -78,7 +76,6 @@ async def run_daily() -> int:
         await _mark_observability(result="skip", detail="already_published")
         return 0
 
-    # Idempotencia 2: lock simple para evitar doble ejecución concurrente.
     lock_acquired = False
     lock_val = await kv_get(lock_key)
     now_ts = _now_ts()
@@ -87,7 +84,7 @@ async def run_daily() -> int:
             lock_ts = int(lock_val)
         except Exception:
             lock_ts = now_ts
-        if now_ts - lock_ts < 900:  # 15 min
+        if now_ts - lock_ts < 900:
             await _notify(bot, ops_chat_id, f"ℹ️ Daily radar en ejecución o recién corrido. lock=<code>{lock_key}</code>")
             await _mark_observability(result="skip", detail="lock_recent")
             return 0
@@ -180,6 +177,7 @@ async def run_daily() -> int:
             "draft_message_id": msg.message_id,
         }, ensure_ascii=False))
         return 0
+
     except Exception as e:
         await _mark_observability(result="error", detail=str(e))
         await _notify(bot, ops_chat_id, f"🔴 Daily radar error: <code>{str(e)[:300]}</code>")
@@ -189,6 +187,7 @@ async def run_daily() -> int:
             "error": str(e)[:300],
         }, ensure_ascii=False))
         raise
+
     finally:
         if lock_acquired:
             await kv_set(lock_key, "0")
