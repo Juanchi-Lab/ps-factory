@@ -688,6 +688,72 @@ async def cmd_intraday_force_draft(update: Update, context: ContextTypes.DEFAULT
     )
 
 
+async def cmd_intraday_force_draft(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ops_chat_id = int(os.getenv("TG_OPS_CHAT_ID", "0") or 0)
+    effective_chat = update.effective_chat.id if update.effective_chat else 0
+
+    if ops_chat_id and int(effective_chat) != ops_chat_id:
+        await update.message.reply_text("❌ Este comando solo está permitido en PS | OPS.")
+        return
+
+    await _safe_reply(update, "🛠 Ejecutando intraday FORCE -> Draft...")
+
+    try:
+        run_id, winner, alternates = await run_radar_x()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Radar falló: <code>{str(e)[:500]}</code>", parse_mode=ParseMode.HTML)
+        return
+
+    winner_id = winner["candidate_id"]
+    winner_score = float(winner.get("total_score") or 0.0)
+
+    prompt = await _prompt_from_candidate(winner)
+    raw = openclaw_chat(prompt)
+    try:
+        post = json.loads(_extract_json(raw))
+    except Exception:
+        await update.message.reply_text("❌ El modelo no devolvió JSON válido.", parse_mode=ParseMode.HTML)
+        return
+
+    post_id = f"intraday-{_now_ts()}"
+    post["post_id"] = post_id
+    post["topic"] = str(post.get("topic") or "Intraday FORCE")
+    post["radar_winner_candidate_id"] = winner_id
+    post["radar_selected_candidate_id"] = winner_id
+
+    alt_ids = [a["candidate_id"] for a in alternates]
+    post["radar_alternate_candidate_ids"] = alt_ids
+    post["radar_winner_preview"] = _candidate_preview(winner)
+    post["radar_alternate_previews"] = [_candidate_preview(a) for a in alternates]
+
+    bitcoin_anchor = str(post.get("bitcoin_anchor") or "")
+    await create_post(post_id=post_id, topic=post["topic"], bitcoin_anchor=bitcoin_anchor)
+    await add_version(post_id=post_id, version=1, content=post)
+    await log_event(post_id, "INTRADAY_FORCE_DRAFT", {
+        "run_id": run_id,
+        "winner": winner_id,
+        "winner_score": winner_score,
+        "alts": alt_ids,
+    })
+
+    msg = await context.bot.send_message(
+        chat_id=DRAFTS_CHAT_ID,
+        text=render_post_html(post_id, 1, post),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=build_post_keyboard(post_id, candidate_ids=alt_ids),
+    )
+    await set_draft_message_ref(post_id, DRAFTS_CHAT_ID, msg.message_id)
+
+    await update.message.reply_text(
+        "✅ FORCE enviado a Drafts.\n\n"
+        f"<b>run_id:</b> <code>{run_id}</code>\n"
+        f"<b>post_id:</b> <code>{post_id}</code>\n"
+        f"<b>winner_score:</b> <code>{winner_score:.3f}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cmd_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     topic = " ".join(context.args).strip()
     if not topic:
@@ -1128,6 +1194,7 @@ def main() -> None:
     app.add_handler(CommandHandler("gen", cmd_gen))
     app.add_handler(CommandHandler("radar", cmd_radar))
     app.add_handler(CommandHandler("intraday_now", cmd_intraday_now))
+    app.add_handler(CommandHandler("intraday_force_draft", cmd_intraday_force_draft))
     app.add_handler(CommandHandler("intraday_force_draft", cmd_intraday_force_draft))
 
     app.add_handler(CommandHandler("health", cmd_health))
