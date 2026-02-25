@@ -1,4 +1,5 @@
 import math
+import os
 import re
 from typing import Dict, Tuple, List, Any
 from urllib.parse import urlparse
@@ -42,25 +43,50 @@ LOW_TRUST_DOMAINS: List[str] = [
     "substack.com",
 ]
 
+
+def _fenv(key: str, default: float) -> float:
+    try:
+        return float(os.getenv(key, str(default)))
+    except Exception:
+        return default
+
+
+W_RELEVANCE = _fenv("SCORING_W_RELEVANCE", 0.45)
+W_VIRAL = _fenv("SCORING_W_VIRAL", 0.25)
+W_EDU = _fenv("SCORING_W_EDU", 0.15)
+W_RISK = _fenv("SCORING_W_RISK", 0.35)
+
+LINK_BOOST_BASE = _fenv("SCORING_LINK_BOOST_BASE", 2.2)
+LINK_BOOST_EXTRA_URL = _fenv("SCORING_LINK_BOOST_EXTRA_URL", 0.3)
+RT_PENALTY_VALUE = _fenv("SCORING_RT_PENALTY", 0.8)
+
+DOMAIN_BOOST_HIGH = _fenv("SCORING_DOMAIN_BOOST_HIGH", 0.9)
+DOMAIN_BOOST_LOW = _fenv("SCORING_DOMAIN_BOOST_LOW", -0.35)
+
 # ---------------------------
 # Helpers
 # ---------------------------
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 
+
 def _kw_hits(text: str, kws: List[str]) -> int:
     t = (text or "").lower()
     return sum(1 for k in kws if k in t)
 
+
 def _has_url(text: str) -> bool:
     return bool(_URL_RE.search(text or ""))
+
 
 def _count_urls(text: str) -> int:
     return len(_URL_RE.findall(text or ""))
 
+
 def _is_rt(text: str) -> bool:
     t = (text or "").lstrip()
     return t.startswith("RT @") or t.startswith("rt @")
+
 
 def _extract_domains(text: str) -> List[str]:
     domains: List[str] = []
@@ -78,6 +104,7 @@ def _extract_domains(text: str) -> List[str]:
             continue
     return domains
 
+
 def _domain_trust_score(domains: List[str]) -> Tuple[float, str]:
     if not domains:
         return 0.0, "none"
@@ -86,18 +113,20 @@ def _domain_trust_score(domains: List[str]) -> Tuple[float, str]:
         return host == base or host.endswith("." + base)
 
     if any(_match(h, d) for h in domains for d in HIGH_TRUST_DOMAINS):
-        return 0.9, "high"
+        return DOMAIN_BOOST_HIGH, "high"
 
     if any(_match(h, d) for h in domains for d in LOW_TRUST_DOMAINS):
-        return -0.35, "low"
+        return DOMAIN_BOOST_LOW, "low"
 
     return 0.0, "unknown"
+
 
 def _safe_int(x: Any, default: int = 0) -> int:
     try:
         return int(x)
     except Exception:
         return default
+
 
 # ---------------------------
 # Main scoring
@@ -128,15 +157,11 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
     replies = _safe_int(m.get("reply_count", 0))
     quotes = _safe_int(m.get("quote_count", 0))
 
-    # ---------------------------
     # 1️⃣ Viralidad (log scale)
-    # ---------------------------
     vir_raw = likes + (2 * rts) + replies + (2 * quotes)
     viral = min(10.0, math.log10(vir_raw + 1) * 3.5)
 
-    # ---------------------------
     # 2️⃣ Relevancia editorial
-    # ---------------------------
     btc_hits = _kw_hits(text, BTC_KW)
     pa_hits = _kw_hits(text, PANAMA_KW)
 
@@ -145,9 +170,7 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
     else:
         relevance = min(10.0, 2.0 + btc_hits * 1.3 + pa_hits * 0.6)
 
-    # ---------------------------
     # 3️⃣ Valor educativo
-    # ---------------------------
     edu = 0.0
     if any(k in text for k in [
         "why", "porque", "cómo", "como",
@@ -164,15 +187,11 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
 
     edu = min(10.0, edu)
 
-    # ---------------------------
     # 4️⃣ Riesgo editorial
-    # ---------------------------
     risk_hits = _kw_hits(text, RISK_KW)
     risk = min(10.0, risk_hits * 2.5)
 
-    # ---------------------------
     # 5️⃣ Señales de noticia dura
-    # ---------------------------
     has_url = _has_url(text_raw)
     url_count = _count_urls(text_raw)
     is_rt = _is_rt(text_raw)
@@ -180,31 +199,25 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
 
     link_boost = 0.0
     if has_url:
-        link_boost += 2.2
+        link_boost += LINK_BOOST_BASE
         if url_count >= 2:
-            link_boost += 0.3
+            link_boost += LINK_BOOST_EXTRA_URL
 
     domain_boost, domain_trust = _domain_trust_score(domains)
 
-    # 🔵 RT inteligente:
-    # Solo penaliza si:
-    # - Es RT
-    # - No tiene link
-    # - Relevancia baja (<5)
+    # RT inteligente
     rt_penalty = 0.0
     if is_rt and not has_url and relevance < 5:
-        rt_penalty = 0.8
+        rt_penalty = RT_PENALTY_VALUE
 
-    # ---------------------------
     # 6️⃣ Score final
-    # ---------------------------
     total = (
-        (0.45 * relevance) +
-        (0.25 * viral) +
-        (0.15 * edu) +
+        (W_RELEVANCE * relevance) +
+        (W_VIRAL * viral) +
+        (W_EDU * edu) +
         link_boost +
         domain_boost -
-        (0.35 * risk) -
+        (W_RISK * risk) -
         rt_penalty
     )
 
@@ -230,6 +243,16 @@ def score_tweet(tw: Dict, *, source: str) -> Tuple[float, Dict]:
         "rts": rts,
         "replies": replies,
         "quotes": quotes,
+        "weights": {
+            "w_relevance": W_RELEVANCE,
+            "w_viral": W_VIRAL,
+            "w_edu": W_EDU,
+            "w_risk": W_RISK,
+            "link_boost_base": LINK_BOOST_BASE,
+            "domain_boost_high": DOMAIN_BOOST_HIGH,
+            "domain_boost_low": DOMAIN_BOOST_LOW,
+            "rt_penalty": RT_PENALTY_VALUE,
+        },
     }
 
     return total, breakdown
