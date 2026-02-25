@@ -29,6 +29,7 @@ from db.sqlite_store import (
     log_event,
     get_last_post_id,
     get_radar_candidate,
+    kv_get,
 )
 
 from tg.renderers import render_post_html
@@ -513,6 +514,37 @@ async def cmd_radar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_intraday_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ops_chat_id = int(os.getenv("TG_OPS_CHAT_ID", "0") or 0)
+    effective_chat = update.effective_chat.id if update.effective_chat else 0
+
+    # Seguridad básica: comando manual solo permitido desde chat OPS.
+    if ops_chat_id and int(effective_chat) != ops_chat_id:
+        await update.message.reply_text("❌ Este comando solo está permitido en PS | OPS.")
+        return
+
+    await _safe_reply(update, "🚨 Ejecutando intraday monitor manual...")
+
+    try:
+        from scheduler.intraday_monitor_run import run_intraday_monitor
+        await run_intraday_monitor()
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Intraday monitor falló: <code>{str(e)[:400]}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    last_result = await kv_get("intraday:last_result")
+    last_ts = await kv_get("intraday:last_run_ts")
+    await update.message.reply_text(
+        "✅ Intraday monitor ejecutado.\n\n"
+        f"<b>last_result:</b> <code>{(last_result or 'unknown')[:120]}</code>\n"
+        f"<b>last_run_ts:</b> <code>{(last_ts or 'n/a')[:40]}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cmd_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     topic = " ".join(context.args).strip()
     if not topic:
@@ -952,6 +984,7 @@ def main() -> None:
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("gen", cmd_gen))
     app.add_handler(CommandHandler("radar", cmd_radar))
+    app.add_handler(CommandHandler("intraday_now", cmd_intraday_now))
 
     app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("last", cmd_last))

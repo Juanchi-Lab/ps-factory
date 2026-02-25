@@ -70,6 +70,8 @@ async def run_intraday_monitor() -> int:
     cur_count_raw = await kv_get(cap_key)
     cur_count = int(cur_count_raw or '0')
     if cur_count >= max_alerts_day:
+        await kv_set('intraday:last_run_ts', str(_now_ts()))
+        await kv_set('intraday:last_result', 'skip_cap_reached')
         return 0
 
     run_id, winner, _alts = await run_radar_x()
@@ -98,16 +100,26 @@ async def run_intraday_monitor() -> int:
     if tweet_created_ts:
         age_min = (_now_ts() - tweet_created_ts) / 60.0
         if age_min > max_age_minutes:
+            await kv_set('intraday:last_run_ts', str(_now_ts()))
+            await kv_set('intraday:last_result', 'skip_stale')
             return 0
 
     # impact gate
     if total_score < min_score:
+        await kv_set('intraday:last_run_ts', str(_now_ts()))
+        await kv_set('intraday:last_result', 'skip_low_score')
         return 0
     if relevance < min_rel:
+        await kv_set('intraday:last_run_ts', str(_now_ts()))
+        await kv_set('intraday:last_result', 'skip_low_relevance')
         return 0
     if risk > max_risk:
+        await kv_set('intraday:last_run_ts', str(_now_ts()))
+        await kv_set('intraday:last_result', 'skip_high_risk')
         return 0
     if require_link and not has_url:
+        await kv_set('intraday:last_run_ts', str(_now_ts()))
+        await kv_set('intraday:last_result', 'skip_missing_link')
         return 0
 
     # cooldown by candidate
@@ -117,6 +129,8 @@ async def run_intraday_monitor() -> int:
         try:
             last_alert_ts = int(last_alert_raw)
             if _now_ts() - last_alert_ts < int(cooldown_hours * 3600):
+                await kv_set('intraday:last_run_ts', str(_now_ts()))
+                await kv_set('intraday:last_result', 'skip_cooldown')
                 return 0
         except Exception:
             pass
