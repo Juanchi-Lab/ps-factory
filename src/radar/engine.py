@@ -152,6 +152,28 @@ async def run_radar_x() -> Tuple[str, Dict, List[Dict]]:
 
     scored.sort(key=lambda c: c["total_score"], reverse=True)
 
+    # Tie-break Panamá: si top2 están muy cerca, prioriza mayor pa_hits
+    tie_delta = float(os.getenv("RADAR_TIE_DELTA", "0.25"))
+    tie_min_pa_adv = int(os.getenv("RADAR_TIE_MIN_PA_ADV", "1"))
+    if len(scored) >= 2:
+        a = scored[0]
+        b = scored[1]
+        gap = float(a.get("total_score") or 0.0) - float(b.get("total_score") or 0.0)
+        if gap <= tie_delta:
+            try:
+                sa = json.loads(a.get("scores_json") or "{}")
+            except Exception:
+                sa = {}
+            try:
+                sb = json.loads(b.get("scores_json") or "{}")
+            except Exception:
+                sb = {}
+
+            pa_a = int(sa.get("pa_hits") or 0)
+            pa_b = int(sb.get("pa_hits") or 0)
+            if (pa_b - pa_a) >= tie_min_pa_adv:
+                scored[0], scored[1] = scored[1], scored[0]
+
     # top 4 (1 winner + 3 alternos)
     top4 = scored[:4]
 
