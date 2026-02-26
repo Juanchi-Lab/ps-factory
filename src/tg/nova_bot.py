@@ -69,44 +69,62 @@ def _compose_publish_pack(post_id: str, ver: int, content: dict) -> str:
     e1 = "⚡ " if use_emojis else ""
     e2 = "🎯 " if use_emojis else ""
 
-    def _to_sentences(s: str) -> list[str]:
-        raw = [x.strip() for x in s.replace("\n", " ").split(". ") if x.strip()]
+    def _word_clip(s: str, limit: int) -> str:
+        t = " ".join((s or "").replace("\n", " ").split())
+        if len(t) <= limit:
+            return t
+        cut = t[:limit].rstrip()
+        sp = cut.rfind(" ")
+        if sp > int(limit * 0.6):
+            cut = cut[:sp]
+        return cut.rstrip(" ,;:-") + "…"
+
+    def _sentences(s: str) -> list[str]:
+        txt = " ".join((s or "").replace("\n", " ").split())
+        if not txt:
+            return []
+
+        protected = {
+            "EE. UU.": "EEUU",
+            "p. ej.": "pej",
+            "etc.": "etc",
+        }
+        for k, v in protected.items():
+            txt = txt.replace(k, v)
+
+        import re
+        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", txt) if p.strip()]
         out: list[str] = []
-        for item in raw:
-            t = item.strip()
-            if not t.endswith((".", "!", "?")):
-                t += "."
-            out.append(t)
+        for p in parts:
+            for k, v in protected.items():
+                p = p.replace(v, k)
+            if not p.endswith((".", "!", "?")):
+                p += "."
+            out.append(p)
         return out
 
-    def _fit_x_summarized(hook_text: str, caption_text: str, tags_text: str, limit: int = 280) -> str:
+    def _summarize_sentences(s: str, limit: int, max_sentences: int = 2) -> str:
+        selected: list[str] = []
+        for snt in _sentences(s):
+            trial = " ".join(selected + [snt]).strip()
+            if len(trial) <= limit and len(selected) < max_sentences:
+                selected.append(snt)
+            else:
+                break
+        if selected:
+            return " ".join(selected).strip()
+        return _word_clip(s, limit)
+
+    def _fit_x_summarized(hook_text: str, explain_text: str, caption_text: str, tags_text: str, limit: int = 280) -> str:
         lines: list[str] = []
         if hook_text:
             lines.append(f"{e1}{hook_text}".strip())
 
         body_budget = limit - len("\n\n".join(lines + [tags_text])) - (2 if lines else 0)
-        body_budget = max(60, body_budget)
+        body_budget = max(70, body_budget)
 
-        body = ""
-        for snt in _to_sentences(caption_text):
-            candidate = (body + " " + snt).strip() if body else snt
-            if len(candidate) <= body_budget:
-                body = candidate
-            else:
-                break
-
-        if not body:
-            words = caption_text.split()
-            acc = []
-            for w in words:
-                trial = (" ".join(acc + [w])).strip()
-                if len(trial) <= max(40, body_budget - 1):
-                    acc.append(w)
-                else:
-                    break
-            body = (" ".join(acc)).strip()
-            if body and not body.endswith((".", "!", "?")):
-                body += "."
+        source = f"{explain_text} {caption_text}".strip()
+        body = _summarize_sentences(source, body_budget, max_sentences=2)
 
         if body:
             lines.append(body)
@@ -118,29 +136,27 @@ def _compose_publish_pack(post_id: str, ver: int, content: dict) -> str:
             return text
 
         # Final guard: trim body, keep hashtags intact
-        if tags_text:
-            head = f"{lines[0]}\n\n" if lines else ""
-            max_body = max(1, limit - len(head) - len("\n\n" + tags_text) - 1)
-            body2 = (body[:max_body]).rstrip()
-            if body2 and not body2.endswith((".", "!", "?")):
-                body2 += "…"
+        if tags_text and len(lines) >= 2:
+            head = f"{lines[0]}\n\n"
+            max_body = max(1, limit - len(head) - len("\n\n" + tags_text))
+            body2 = _word_clip(lines[1], max_body)
             return f"{head}{body2}\n\n{tags_text}".strip()
 
-        return text[: limit - 1].rstrip() + "…"
+        return _word_clip(text, limit)
 
-    x_copy = _fit_x_summarized(hook, caption, tags, 280)
+    x_copy = _fit_x_summarized(hook, explain, caption, tags, 280)
 
     ig_copy = (
         f"{e1}{hook}\n\n"
-        f"{explain[:320]}\n\n"
-        f"{e2}{caption[:180]}\n\n"
+        f"{_summarize_sentences(explain, 360, max_sentences=3)}\n\n"
+        f"{e2}{_summarize_sentences(caption, 200, max_sentences=2)}\n\n"
         f"{tags}"
     ).strip()
 
     tiktok_copy = (
         f"{e1}{hook}\n"
-        f"{explain[:180]}\n\n"
-        f"{e2}{caption[:140]}\n"
+        f"{_summarize_sentences(explain, 190, max_sentences=2)}\n\n"
+        f"{e2}{_summarize_sentences(caption, 150, max_sentences=1)}\n"
         f"{tags}"
     ).strip()
 
