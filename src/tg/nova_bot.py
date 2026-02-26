@@ -265,21 +265,17 @@ async def _send_draft_payload(
         )
 
     chunks = _split_telegram_chunks(full, max_len=1700)
-    first = await context.bot.send_message(
-        chat_id=chat_id,
-        text=chunks[0],
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        reply_markup=build_post_keyboard(post_id, candidate_ids=candidate_ids),
-    )
-    for ch in chunks[1:]:
-        await context.bot.send_message(
+    last_msg = None
+    for i, ch in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
+        last_msg = await context.bot.send_message(
             chat_id=chat_id,
             text=ch,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=(build_post_keyboard(post_id, candidate_ids=candidate_ids) if is_last else None),
         )
-    return first
+    return last_msg
 
 
 async def _send_approved_payload(
