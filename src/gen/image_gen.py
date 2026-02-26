@@ -1,4 +1,5 @@
 import os
+import re
 import base64
 import logging
 import requests
@@ -70,16 +71,27 @@ def _extract_inline_image(resp_json: dict) -> Tuple[bytes, str]:
     raise ImageGenError("Gemini response did not include inline image data")
 
 
+def _sanitize_visual_prompt(visual_prompt: str) -> str:
+    t = str(visual_prompt or "")
+    # Prevent explicit on-image text instructions with forbidden label
+    t = re.sub(r"(?i)bitcoin\s*anchor", "concepto de ancla monetaria", t)
+    t = re.sub(r"(?i)texto\s+visible\s*:\s*[^.\n]+", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 def build_image_prompt_en(visual_prompt: str) -> str:
+    vp = _sanitize_visual_prompt(visual_prompt)
     return (
         "Create a high-quality social image. "
         "Aspect ratio must be 4:5 and target output resolution is 1080x1350 pixels. "
         "All visible text rendered inside the image must be in Spanish. "
         "Add one short, punchy headline in Spanish (max 6 words), high-contrast, easy to read on mobile. "
         "Place headline near the top with strong visual hierarchy. "
-        "Do not include the phrase 'Bitcoin Anchor' as literal on-image text. "
+        "NEVER render these literal strings inside the image: 'Bitcoin Anchor', 'Anchor Bitcoin'. "
+        "Never include labels such as 'Bitcoin Anchor:' in subtitles or footers. "
         "Do not include watermarks or logos unless explicitly requested. "
-        f"Creative direction: {visual_prompt}"
+        f"Creative direction: {vp}"
     )
 
 
