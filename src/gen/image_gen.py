@@ -84,6 +84,65 @@ def _normalize_model_name(model_name: str) -> str:
     return m.split("/", 1)[1] if m.startswith("models/") else m
 
 
+def _apply_watermark_if_enabled(data: bytes, mime: str) -> Tuple[bytes, str]:
+    enabled = os.getenv("IMAGE_WATERMARK_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return data, mime
+
+    text = os.getenv("IMAGE_WATERMARK_TEXT", "Panamá Soberano").strip() or "Panamá Soberano"
+    position = os.getenv("IMAGE_WATERMARK_POSITION", "bottom_right").strip().lower()
+    opacity_raw = os.getenv("IMAGE_WATERMARK_OPACITY", "0.35").strip()
+    try:
+        opacity = max(0.05, min(1.0, float(opacity_raw)))
+    except Exception:
+        opacity = 0.35
+
+    try:
+        from io import BytesIO
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception:
+        # If Pillow is not available, keep original image.
+        return data, mime
+
+    with Image.open(BytesIO(data)).convert("RGBA") as im:
+        w, h = im.size
+        overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        base_size = max(16, int(min(w, h) * 0.03))
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", base_size)
+        except Exception:
+            font = ImageFont.load_default()
+
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = max(1, bbox[2] - bbox[0])
+        th = max(1, bbox[3] - bbox[1])
+        margin = max(12, int(min(w, h) * 0.02))
+
+        if position == "bottom_left":
+            x, y = margin, h - th - margin
+        elif position == "top_right":
+            x, y = w - tw - margin, margin
+        elif position == "top_left":
+            x, y = margin, margin
+        else:
+            x, y = w - tw - margin, h - th - margin
+
+        # soft shadow + text
+        draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, int(255 * opacity * 0.65)))
+        draw.text((x, y), text, font=font, fill=(255, 255, 255, int(255 * opacity)))
+
+        out = Image.alpha_composite(im, overlay)
+        buf = BytesIO()
+        if mime == "image/png":
+            out.save(buf, format="PNG")
+            return buf.getvalue(), "image/png"
+
+        out.convert("RGB").save(buf, format="JPEG", quality=92)
+        return buf.getvalue(), "image/jpeg"
+
+
 def generate_image_gemini(*, visual_prompt: str, timeout_s: int = 90) -> Tuple[bytes, str, str]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -116,6 +175,7 @@ def generate_image_gemini(*, visual_prompt: str, timeout_s: int = 90) -> Tuple[b
 
     data = r.json()
     img_bytes, mime = _extract_inline_image(data)
+    img_bytes, mime = _apply_watermark_if_enabled(img_bytes, mime)
     return img_bytes, mime, final_prompt
 
 
