@@ -76,24 +76,35 @@ def build_image_prompt_en(visual_prompt: str) -> str:
     )
 
 
+def _normalize_model_name(model_name: str) -> str:
+    m = (model_name or "").strip()
+    return m.split("/", 1)[1] if m.startswith("models/") else m
+
+
 def generate_image_gemini(*, visual_prompt: str, timeout_s: int = 90) -> Tuple[bytes, str, str]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise ImageGenError("GEMINI_API_KEY missing")
 
-    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation")
+    raw_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
+    model = _normalize_model_name(raw_model)
+    if not model:
+        raise ImageGenError("GEMINI_IMAGE_MODEL missing/invalid")
+
+    use_aspect_ratio = os.getenv("GEMINI_USE_ASPECT_RATIO", "0").strip().lower() in {"1", "true", "yes", "on"}
 
     final_prompt = build_image_prompt_en(visual_prompt) + " Output must not be square."
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    generation_config = {
+        "responseModalities": ["TEXT", "IMAGE"],
+    }
+    if use_aspect_ratio:
+        generation_config["imageConfig"] = {"aspectRatio": "4:5"}
+
     payload = {
         "contents": [{"parts": [{"text": final_prompt}]}],
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"],
-            "imageConfig": {
-                "aspectRatio": "4:5"
-            }
-        }
+        "generationConfig": generation_config,
     }
 
     r = requests.post(url, json=payload, timeout=timeout_s)
