@@ -6,21 +6,28 @@ def _e(s: Any) -> str:
     return html.escape(str(s or ""), quote=False)
 
 
+def _clip(s: Any, n: int) -> str:
+    t = str(s or "").strip()
+    if len(t) <= n:
+        return t
+    return t[: max(1, n - 1)].rstrip() + "…"
+
+
 def render_post_html(post_id: str, version: int, post: Dict[str, Any]) -> str:
     # Título / encabezado
     title = post.get("title") or post.get("topic") or post_id
 
-    hook = post.get("hook", "")
-    explain = post.get("explain_simple", "")
-    btc = post.get("bitcoin_anchor", "")
-    insight = post.get("insight", "")
-    risk = post.get("risk", "")
-    caption = post.get("caption", "")
-    visual = post.get("visual_prompt", "")
-    visual_en = post.get("visual_prompt_en", "")
+    hook = _clip(post.get("hook", ""), 280)
+    explain = _clip(post.get("explain_simple", ""), 700)
+    btc = _clip(post.get("bitcoin_anchor", ""), 360)
+    insight = _clip(post.get("insight", ""), 360)
+    risk = _clip(post.get("risk", ""), 260)
+    caption = _clip(post.get("caption", ""), 420)
+    visual = _clip(post.get("visual_prompt", ""), 320)
+    visual_en = _clip(post.get("visual_prompt_en", ""), 360)
 
-    qa = post.get("qa") or []
-    qa_lines = "\n".join([f"• {_e(x)}" for x in qa]) if qa else "• (sin checklist)"
+    qa = (post.get("qa") or [])[:5]
+    qa_lines = "\n".join([f"• {_e(_clip(x, 140))}" for x in qa]) if qa else "• (sin checklist)"
 
     selected = post.get("radar_selected_candidate_id") or post.get("radar_winner_candidate_id")
     selected_preview = post.get("radar_selected_preview") or post.get("radar_winner_preview") or {}
@@ -58,7 +65,7 @@ def render_post_html(post_id: str, version: int, post: Dict[str, Any]) -> str:
         )
 
     # Estilo: emojis + labels en negrita, con saltos claros (como antes)
-    return (
+    body = (
         f"🟠 <b>POST DEL DÍA</b> — <code>{_e(post_id)}</code> · v{version}\n\n"
         f"🎯 <b>Hook</b>\n{_e(hook)}\n\n"
         f"🧠 <b>Explicación simple</b>\n{_e(explain)}\n\n"
@@ -71,3 +78,8 @@ def render_post_html(post_id: str, version: int, post: Dict[str, Any]) -> str:
         f"✅ <b>Checklist QA</b>\n{qa_lines}"
         f"{radar_block}"
     )
+
+    if len(body) > 3900:
+        # recorte de seguridad para Telegram (4096 chars hard limit)
+        body = body[:3890].rstrip() + "\n\n<i>(resumen truncado por longitud)</i>"
+    return body
