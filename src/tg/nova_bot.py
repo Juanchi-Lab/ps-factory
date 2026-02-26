@@ -68,15 +68,33 @@ def _compose_publish_blocks(content: dict) -> dict:
     e1 = "⚡ " if use_emojis else ""
     e2 = "🎯 " if use_emojis else ""
 
+    def _close_copy_text(t: str) -> str:
+        txt = (t or "").strip()
+        if not txt:
+            return txt
+        # evitar cierres abiertos tipo "con", "de", "para" al final
+        bad_endings = {
+            "de", "del", "la", "el", "los", "las", "un", "una", "y", "o",
+            "con", "sin", "para", "por", "en", "a", "que", "como", "sobre"
+        }
+        words = txt.split()
+        while words and words[-1].strip(".,;:!?").lower() in bad_endings:
+            words.pop()
+        txt = " ".join(words).rstrip(" ,;:-")
+        if txt and not txt.endswith((".", "!", "?")):
+            txt += "."
+        return txt
+
     def _word_clip(s: str, limit: int) -> str:
         t = " ".join((s or "").replace("\n", " ").split())
         if len(t) <= limit:
-            return t
+            return _close_copy_text(t)
         cut = t[:limit].rstrip()
         sp = cut.rfind(" ")
         if sp > int(limit * 0.6):
             cut = cut[:sp]
-        return cut.rstrip(" ,;:-") + "…"
+        # sin elipsis para evitar sensación de frase incompleta
+        return _close_copy_text(cut)
 
     def _sentences(s: str) -> list[str]:
         txt = " ".join((s or "").replace("\n", " ").split())
