@@ -1341,6 +1341,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 if image_only_on_approve:
                     await query.message.reply_text("🧩 Generando 6 imágenes del carrusel…", parse_mode=ParseMode.HTML)
 
+                    media_items = []
+                    slide_order = []
+
                     for idx, s in enumerate(carousel_slides[:6], start=1):
                         title = str(s.get("title") or f"Slide {idx}").strip()
                         body = str(s.get("body") or "").strip()
@@ -1375,17 +1378,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                             await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL", {"by": approver, "version": ver, "slide": idx, "reason": last_reason})
                             return
 
-                        await context.bot.send_photo(chat_id=approved_chat_id, photo=img_bytes)
-                        sent = await context.bot.send_message(
-                            chat_id=approved_chat_id,
-                            text=(
-                                f"<b>Slide {idx}: {_e(title)}</b>\n\n"
-                                f"{_e(body)}"
-                            ),
-                            parse_mode=ParseMode.HTML,
-                            disable_web_page_preview=True,
-                        )
+                        media_items.append(InputMediaPhoto(media=img_bytes))
+                        slide_order.append(idx)
                         generated += 1
+
+                    sent = None
+                    if media_items:
+                        mg = await context.bot.send_media_group(chat_id=approved_chat_id, media=media_items)
+                        if mg:
+                            sent = mg[0]
 
                     cap = str((content or {}).get("caption") or "").strip()
                     if cap:
@@ -1397,7 +1398,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         )
 
                     await kv_set(img_day_counter_key, str(day_count + generated))
-                    await log_event(post_id, "APPROVE_CAROUSEL_OK", {"by": approver, "version": ver, "slides": generated, "day_count": day_count + generated})
+                    await log_event(
+                        post_id,
+                        "APPROVE_CAROUSEL_OK",
+                        {"by": approver, "version": ver, "slides": generated, "day_count": day_count + generated, "carousel_order": slide_order},
+                    )
                 else:
                     # fallback textual only (rare)
                     for idx, s in enumerate(carousel_slides[:6], start=1):
