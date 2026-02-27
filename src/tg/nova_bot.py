@@ -1089,6 +1089,9 @@ No markdown. No explanations. No extra text.
     slides = []
     for i, s in enumerate(slides_raw[:8], start=1):
         txt = str((s or {}).get("text") or "").strip()
+        for bad in ["HOOK:", "DESARROLLO:", "CLIMAX:", "CTA:", "SLIDE ", "DIAPOSITIVA "]:
+            if txt.upper().startswith(bad):
+                txt = txt[len(bad):].strip(" -:")
         role = str((s or {}).get("role") or "development").strip().lower()
         title = str((s or {}).get("title") or role.title()).strip()
         if not txt:
@@ -1154,14 +1157,14 @@ No markdown. No explanations. No extra text.
         else:
             sl["role"] = "development"
 
-    if len(slides) < min_slides:
+    if len(slides) < target_count:
         # extend with concise continuations to avoid broken outputs
         base = slides[-1] if slides else {"role":"development","body":""}
-        while len(slides) < min_slides:
+        while len(slides) < target_count:
             i = len(slides) + 1
             slides.append({
                 "n": i,
-                "role": "development" if i < min_slides else "cta",
+                "role": "development" if i < target_count else "cta",
                 "title": "Continuación",
                 "body": str(base.get("body") or "Resumen de la idea central."),
                 "bridge": "",
@@ -1475,7 +1478,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 sent = None
                 generated = 0
                 if image_only_on_approve:
-                    await query.message.reply_text("🧩 Generando 6 imágenes del carrusel…", parse_mode=ParseMode.HTML)
+                    await query.message.reply_text(f"🧩 Generando {needed} imágenes del carrusel…", parse_mode=ParseMode.HTML)
 
                     media_items = []
                     slide_order = []
