@@ -1487,6 +1487,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     protagonist = str((content or {}).get("carousel_protagonist") or "").strip()
 
                     for idx, s in enumerate(carousel_slides[:approve_max_slides], start=1):
+                        await query.message.reply_text(
+                            f"🎞️ Slide {idx}/{min(approve_max_slides, len(carousel_slides))}: generando…",
+                            parse_mode=ParseMode.HTML,
+                        )
                         title = str(s.get("title") or f"Slide {idx}").strip()
                         body = str(s.get("body") or "").strip()
                         emotion = str(s.get("emotion") or "").strip()
@@ -1565,6 +1569,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         media_items.append(InputMediaPhoto(media=img_bytes))
                         slide_order.append(idx)
                         generated += 1
+                        await query.message.reply_text(
+                            f"✅ Slide {idx}/{min(approve_max_slides, len(carousel_slides))} lista",
+                            parse_mode=ParseMode.HTML,
+                        )
 
                     sent = None
                     if not media_items:
@@ -1575,6 +1583,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL_EMPTY", {"by": approver, "version": ver})
                         return
 
+                    await query.message.reply_text(
+                        f"📦 Enviando álbum final ({len(media_items)} slides válidas)…",
+                        parse_mode=ParseMode.HTML,
+                    )
                     mg = await context.bot.send_media_group(chat_id=approved_chat_id, media=media_items)
                     if mg:
                         sent = mg[0]
