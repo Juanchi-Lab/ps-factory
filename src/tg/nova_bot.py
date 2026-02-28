@@ -1563,6 +1563,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                                 parse_mode=ParseMode.HTML,
                             )
                             await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL", {"by": approver, "version": ver, "slide": idx, "reason": last_reason, "role": role or None, "critical": True})
+                            await kv_set(lock_key, "0")
                             return
 
                         img_bytes, img_mime = apply_carousel_index_badge(img_bytes, img_mime, idx=idx, total=min(approve_max_slides, len(carousel_slides)))
@@ -1581,6 +1582,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                             parse_mode=ParseMode.HTML,
                         )
                         await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL_EMPTY", {"by": approver, "version": ver})
+                        await kv_set(lock_key, "0")
                         return
 
                     await query.message.reply_text(
