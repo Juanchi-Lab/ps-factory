@@ -1487,6 +1487,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     protagonist = str((content or {}).get("carousel_protagonist") or "").strip()
 
                     for idx, s in enumerate(carousel_slides[:approve_max_slides], start=1):
+                        await query.message.reply_text(
+                            f"🎞️ Slide {idx}/{min(approve_max_slides, len(carousel_slides))}: generando…",
+                            parse_mode=ParseMode.HTML,
+                        )
                         title = str(s.get("title") or f"Slide {idx}").strip()
                         body = str(s.get("body") or "").strip()
                         emotion = str(s.get("emotion") or "").strip()
@@ -1521,38 +1525,89 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                                         last_reason = f"forbidden_label:{token}"
                                         await log_event(post_id, "CAROUSEL_OCR_RETRY", {"slide": idx, "attempt": attempt, "token": token})
                                         if ocr_strict:
+                                            prompt_src = (
+                                                prompt_src
+                                                + " IMPORTANT: no text, no letters, no words, no logos, no labels, no numbers, no watermark."
+                                            )
                                             continue
                                     img_bytes, img_mime = bts, mime
                                     break
                                 last_reason = f"bad_aspect:{w}x{h}"
+                                prompt_src = prompt_src + " IMPORTANT: portrait composition strict 4:5."
                             except Exception as e:
                                 last_reason = str(e)[:180]
 
                         if not img_bytes:
+                            skip_failed = os.getenv("CAROUSEL_SKIP_FAILED_SLIDES", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+                            # Narrative safety: critical slides must not be skipped
+                            role = str(s.get("role") or "").strip().lower()
+                            critical_roles_raw = os.getenv("CAROUSEL_CRITICAL_ROLES", "hook,bridge,climax,cta")
+                            critical_roles = {x.strip().lower() for x in critical_roles_raw.split(",") if x.strip()}
+                            is_critical_by_role = bool(role and role in critical_roles)
+                            is_critical_by_position = idx == 1 or idx == min(approve_max_slides, len(carousel_slides))
+                            is_critical = is_critical_by_role or is_critical_by_position
+
+                            if skip_failed and not is_critical:
+                                await query.message.reply_text(
+                                    f"⚠️ Slide {idx} omitido: no se pudo generar imagen válida tras reintentos.\n"
+                                    f"<code>{_e(last_reason)}</code>",
+                                    parse_mode=ParseMode.HTML,
+                                )
+                                await log_event(post_id, "CAROUSEL_SLIDE_SKIPPED", {"by": approver, "version": ver, "slide": idx, "reason": last_reason, "role": role or None})
+                                continue
+
                             await query.message.reply_text(
-                                f"❌ Carrusel bloqueado en slide {idx}: no se pudo generar imagen válida (4:5 / OCR).\n"
+                                f"❌ Carrusel bloqueado en slide {idx}: slide crítica sin imagen válida (4:5 / OCR).\n"
                                 f"<code>{_e(last_reason)}</code>",
                                 parse_mode=ParseMode.HTML,
                             )
-                            await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL", {"by": approver, "version": ver, "slide": idx, "reason": last_reason})
+                            await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL", {"by": approver, "version": ver, "slide": idx, "reason": last_reason, "role": role or None, "critical": True})
+                            await kv_set(lock_key, "0")
                             return
 
                         img_bytes, img_mime = apply_carousel_index_badge(img_bytes, img_mime, idx=idx, total=min(approve_max_slides, len(carousel_slides)))
                         media_items.append(InputMediaPhoto(media=img_bytes))
                         slide_order.append(idx)
                         generated += 1
+                        await query.message.reply_text(
+                            f"✅ Slide {idx}/{min(approve_max_slides, len(carousel_slides))} lista",
+                            parse_mode=ParseMode.HTML,
+                        )
 
                     sent = None
-                    if media_items:
-                        mg = await context.bot.send_media_group(chat_id=approved_chat_id, media=media_items)
-                        if mg:
-                            sent = mg[0]
+                    if not media_items:
+                        await query.message.reply_text(
+                            "❌ Carrusel bloqueado: no se logró generar ninguna slide válida.",
+                            parse_mode=ParseMode.HTML,
+                        )
+                        await log_event(post_id, "APPROVE_BLOCKED_CAROUSEL_EMPTY", {"by": approver, "version": ver})
+                        await kv_set(lock_key, "0")
+                        return
+
+                    await query.message.reply_text(
+                        f"📦 Enviando álbum final ({len(media_items)} slides válidas)…",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    mg = await context.bot.send_media_group(chat_id=approved_chat_id, media=media_items)
+                    if mg:
+                        sent = mg[0]
 
                     cap = str((content or {}).get("caption") or "").strip()
                     if cap:
+                        total_slides = len(carousel_slides)
+                        if slide_order:
+                            contiguous = len(slide_order) == (slide_order[-1] - slide_order[0] + 1)
+                            if contiguous:
+                                seq_txt = f"{slide_order[0]}/{total_slides} → {slide_order[-1]}/{total_slides}"
+                            else:
+                                seq_txt = ", ".join([f"{i}/{total_slides}" for i in slide_order])
+                        else:
+                            seq_txt = f"1/{total_slides}"
+
                         sent = await context.bot.send_message(
                             chat_id=approved_chat_id,
-                            text=f"📝 <b>Caption carrusel</b>\n{_e(cap)}\n\n<i>Secuencia visual: 1/6 → 6/6 (badge en cada slide)</i>",
+                            text=f"📝 <b>Caption carrusel</b>\n{_e(cap)}\n\n<i>Secuencia visual: {seq_txt} (badge en cada slide)</i>",
                             parse_mode=ParseMode.HTML,
                             disable_web_page_preview=True,
                         )
